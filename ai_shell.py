@@ -2,7 +2,7 @@ import os, sys
 import subprocess
 import shlex
 
-import asyncio, threading
+import threading
 import queue
 
 from prompt_toolkit import PromptSession
