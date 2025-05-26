@@ -12,6 +12,7 @@ dependencies = [
     "chromadb>=1.0.0",
     "prompt_toolkit>=3.0.0",
     "sentence_transformers>=2.0.0",
+    "transformers"
 ]
 
 [project.optional-dependencies]
@@ -20,7 +21,3 @@ dev = [
     "black",
     "flake8"
 ]
-
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
