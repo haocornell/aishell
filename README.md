@@ -5,3 +5,5 @@
 It uses vector DB (chromadb for example) to store and search command history.
 
 Also, plan to support agent running at background as well to finish some long-running tasks.
+
+Author:ming
