@@ -12,19 +12,13 @@ from prompt_toolkit.document import Document
 
 from azure.identity import AzureCliCredential
 
-from azure.identity.aio import (
-    AzureDeveloperCliCredential,
-    ManagedIdentityCredential,
-    get_bearer_token_provider,
-)
-
 from openai import AzureOpenAI
 from openai.types.chat import (
     ChatCompletion,
     )
 from openai_messages_token_helper import build_messages
 
-class AsyncChromaDB:
+class ChromaDB:
     from chromadb.config import Settings
 
     def __init__(self, persist_directory="/home/mihao/chroma_db", collection_name="commands"):
@@ -33,29 +27,24 @@ class AsyncChromaDB:
         self._client = None
         self._collection = None
 
-    async def init(self):
-        def sync_init():
-            import chromadb
-            client = chromadb.PersistentClient(path=self.persist_directory)
-            collection = client.get_or_create_collection(self.collection_name)
-            return client, collection
-        self._client, self._collection = await asyncio.to_thread(sync_init)
+    def init(self):
+        import chromadb
+        self._client = chromadb.PersistentClient(path=self.persist_directory)
+        self._collection = self._client.get_or_create_collection(self.collection_name)
+            
+    def add(self, documents: list[str], ids, embeddings):
+        from sentence_transformers import SentenceTransformer
 
-    async def add(self, documents: list[str], ids, embeddings):
-        def sync_add():
-            from sentence_transformers import SentenceTransformer
+        model = SentenceTransformer("all-MiniLM-L6-v2")
 
-            model = SentenceTransformer("all-MiniLM-L6-v2")
+        ids = [str(hash(doc)) for doc in documents]
+        embeddings = model.encode(documents).tolist()  # List of lists
 
-            ids = [str(hash(doc)) for doc in documents]
-            embeddings = model.encode(documents).tolist()  # List of lists
-
-            self._collection.add(
-                documents=documents,
-                ids=ids,
-                embeddings=embeddings
-            )
-        await asyncio.to_thread(sync_add)
+        self._collection.add(
+            documents=documents,
+            ids=ids,
+            embeddings=embeddings
+        )
 
     def query(self, query_texts, n_results=1, include=None):
         return self._collection.query(
@@ -211,19 +200,7 @@ def main():
             
             result = subprocess.run(line, shell=True, executable="/bin/bash")
             if result.returncode == 0:            
-                # Run the vector DB storage in a separate thread running async
-                def store_cmd_thread(cmd):
-                    async def store_cmd_async():
-                        # Initialize AsyncChromaDB if not already done
-                        if not hasattr(main, "_chroma_db"):
-                            main._chroma_db = AsyncChromaDB()
-                            await main._chroma_db.init()
-                        # Add the command to the vector DB
-                        await main._chroma_db.add([cmd], None, None)
-                    asyncio.run(store_cmd_async())
-
                 # Use a single background thread and a queue to reuse the thread
-
                 if not hasattr(main, "_cmd_queue"):
                     main._cmd_queue = queue.Queue()
 
@@ -232,12 +209,13 @@ def main():
                             cmd = main._cmd_queue.get()
                             if cmd is None:
                                 break
-                            async def store_cmd_async():
-                                if not hasattr(main, "_chroma_db"):
-                                    main._chroma_db = AsyncChromaDB()
-                                    await main._chroma_db.init()
-                                await main._chroma_db.add([cmd], None, None)
-                            asyncio.run(store_cmd_async())
+                            
+                            if not hasattr(main, "_chroma_db"):
+                                main._chroma_db = ChromaDB()
+                                main._chroma_db.init()
+
+                            # Add the command to the vector DB
+                            main._chroma_db.add([cmd], None, None)
                             main._cmd_queue.task_done()
 
                     main._worker_thread = threading.Thread(target=worker, daemon=True)
