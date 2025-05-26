@@ -3,6 +3,7 @@ import subprocess
 import shlex
 
 import asyncio, threading
+import queue
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion, PathCompleter, WordCompleter
@@ -29,6 +30,7 @@ class AsyncChromaDB:
     async def add(self, documents: list[str], ids, embeddings):
         def sync_add():
             from sentence_transformers import SentenceTransformer
+
 
             model = SentenceTransformer("all-MiniLM-L6-v2")
 
@@ -172,7 +174,28 @@ def main():
                         await main._chroma_db.add([cmd], None, None)
                     asyncio.run(store_cmd_async())
 
-                threading.Thread(target=store_cmd_thread, args=(line,), daemon=True).start()
+                # Use a single background thread and a queue to reuse the thread
+
+                if not hasattr(main, "_cmd_queue"):
+                    main._cmd_queue = queue.Queue()
+
+                    def worker():
+                        while True:
+                            cmd = main._cmd_queue.get()
+                            if cmd is None:
+                                break
+                            async def store_cmd_async():
+                                if not hasattr(main, "_chroma_db"):
+                                    main._chroma_db = AsyncChromaDB()
+                                    await main._chroma_db.init()
+                                await main._chroma_db.add([cmd], None, None)
+                            asyncio.run(store_cmd_async())
+                            main._cmd_queue.task_done()
+
+                    main._worker_thread = threading.Thread(target=worker, daemon=True)
+                    main._worker_thread.start()
+
+                main._cmd_queue.put(line)
 
         except (EOFError, KeyboardInterrupt):
             break
