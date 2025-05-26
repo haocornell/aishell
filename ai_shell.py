@@ -18,14 +18,11 @@ from azure.identity.aio import (
     get_bearer_token_provider,
 )
 
-from openai import AsyncAzureOpenAI, AsyncOpenAI
+from openai import AzureOpenAI
 from openai.types.chat import (
     ChatCompletion,
-    ChatCompletionChunk,
-    ChatCompletionMessageParam,
-    ChatCompletionToolParam,
     )
-from openai_messages_token_helper import build_messages, get_token_limit
+from openai_messages_token_helper import build_messages
 
 class AsyncChromaDB:
     from chromadb.config import Settings
@@ -60,38 +57,33 @@ class AsyncChromaDB:
             )
         await asyncio.to_thread(sync_add)
 
-    async def query(self, query_texts, n_results=1, include=None):
-        def sync_query():
-            return self._collection.query(
+    def query(self, query_texts, n_results=1, include=None):
+        return self._collection.query(
                 query_texts=query_texts,
                 n_results=n_results,
                 include=[
                     "documents", 
                 ]
             )
-        return await asyncio.run(sync_query)
-        #return await asyncio.to_thread(sync_query)
   
-    async def run_search_llm_prompt(self, prompt_text):
+    def run_search_llm_prompt(self, prompt_text):
         if not prompt_text.startswith(":"):
-            await self.query([prompt_text], n_results=3)
+            return self.query([prompt_text], n_results=3)
         
         prompt_text = prompt_text[1:]
 
-        async def get_openai_client():
-            azure_credential = AzureDeveloperCliCredential(process_timeout=60)
-            token_provider = get_bearer_token_provider(azure_credential, "https://cognitiveservices.azure.com/.default")
+        if not hasattr(main, "_openai_client"):
+            credential = AzureCliCredential()
+            token = credential.get_token("https://cognitiveservices.azure.com/.default")
+            access_token = token.token
 
             AZURE_OPENAI_API_VERSION = '2024-08-01-preview'
             endpoint = 'https://mihao-m5wrou16-northcentralus.services.ai.azure.com'
 
-            openai_client = AsyncAzureOpenAI(                                                                                                                       api_version=AZURE_OPENAI_API_VERSION,
+            main._openai_client = AzureOpenAI(                                                                                                                       api_version=AZURE_OPENAI_API_VERSION,
                         azure_endpoint=endpoint,
-                        azure_ad_token_provider=token_provider,
+                        api_key=access_token,
                     )
-            return openai_client
-        if not hasattr(main, "_openai_client"):
-            main._openai_client = await get_openai_client()
                         
         openai_client = main._openai_client
 
@@ -104,7 +96,7 @@ class AsyncChromaDB:
         
         result = 'No response from LLM!'
         try :
-            response: ChatCompletion = await openai_client.chat.completions.create(
+            response: ChatCompletion = openai_client.chat.completions.create(
                                 messages=query_messages,  # type: ignore
                                 # Azure OpenAI takes the deployment name as the model name
                                 model= model,
@@ -113,7 +105,7 @@ class AsyncChromaDB:
                             )
             result = response.choices[0].message.content
         except Exception as e:
-            print(f"Error in generating Kusto query: {e}", file=sys.stderr)
+            print(f"Error in calling LLM: {e}", file=sys.stderr)
 
         return result
 
@@ -207,11 +199,9 @@ def main():
 
             # LLM invocation syntax: e.g. starts with ":"
             if line.startswith(":") or line.startswith("!"):
-                # Run the async LLM prompt and print results
-                async def run_llm():
-                    results = await main._chroma_db.run_search_llm_prompt(line[1:].strip())
-                    print(results)
-                asyncio.run(run_llm())
+                # Run the sync LLM prompt and print results
+                results =  main._chroma_db.run_search_llm_prompt(line[1:].strip())
+                print(results)
                 continue
 
             # split into tokens for built-ins
